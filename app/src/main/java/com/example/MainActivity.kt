@@ -26,12 +26,19 @@ import androidx.navigation.compose.rememberNavController
 import com.example.ui.screens.GovernanceScreen
 import com.example.ui.screens.TokenAllocationScreen
 import com.example.ui.screens.TreasuryHistoryScreen
-import com.example.ui.screens.WalletConnectScreen
+import com.example.ui.screens.WalletLookupScreen
+import com.example.ui.components.formatTokensCompact
 import com.example.ui.theme.CyanPrimary
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.NegativeRed
 import com.example.ui.theme.PositiveGreen
+import com.example.viewmodel.LoadState
+import com.example.viewmodel.TreasuryViewModel
+import androidx.activity.viewModels
 
 class MainActivity : FragmentActivity() {
+  private val treasuryViewModel: TreasuryViewModel by viewModels()
+
   @OptIn(ExperimentalMaterial3Api::class)
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -41,14 +48,20 @@ class MainActivity : FragmentActivity() {
         val navController = rememberNavController()
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route ?: "allocation"
+        val vm = treasuryViewModel
+        val network = vm.networkConfig
+        val tokenState by vm.token.collectAsState()
+        val safeState by vm.safe.collectAsState()
+        val eventsState by vm.events.collectAsState()
+        val lookupState by vm.lookup.collectAsState()
 
         val items = listOf("allocation", "governance", "wallet", "history")
-        val labels = listOf("Allocation", "Governance", "Hardware Key", "Treasury Flows")
+        val labels = listOf("Supply", "Governance", "Wallet", "History")
         val icons = listOf(
           Icons.Default.PieChart,
           Icons.Default.AccountBalance,
-          Icons.Default.Security,
-          Icons.Default.ShowChart
+          Icons.Default.AccountBalanceWallet,
+          Icons.Default.History
         )
 
         Scaffold(
@@ -83,7 +96,7 @@ class MainActivity : FragmentActivity() {
                       letterSpacing = 0.5.sp
                     )
                     Text(
-                      "Arbitrum One • Multi-Sig Cold Safe",
+                      "${network.name} • Safe-owned" + if (network.chainId == 84532L) " • TESTNET" else "",
                       style = MaterialTheme.typography.labelSmall,
                       color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -91,6 +104,9 @@ class MainActivity : FragmentActivity() {
                 }
               },
               actions = {
+                IconButton(onClick = { vm.refresh() }) {
+                  Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                }
                 Surface(
                   shape = RoundedCornerShape(16.dp),
                   color = MaterialTheme.colorScheme.surfaceVariant,
@@ -100,15 +116,17 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                   ) {
+                    val ready = tokenState as? LoadState.Ready
                     Box(
                       modifier = Modifier
                         .size(7.dp)
                         .clip(CircleShape)
-                        .background(PositiveGreen)
+                        .background(if (ready != null) PositiveGreen else NegativeRed)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                      "423.5M DCDN",
+                      ready?.let { "${formatTokensCompact(it.data.totalSupply)} ${it.data.symbol}" }
+                        ?: if (tokenState is LoadState.Loading) "Loading…" else "Offline",
                       style = MaterialTheme.typography.labelSmall,
                       fontWeight = FontWeight.Bold,
                       color = CyanPrimary
@@ -168,10 +186,23 @@ class MainActivity : FragmentActivity() {
             startDestination = "allocation",
             modifier = Modifier.padding(innerPadding)
           ) {
-            composable("allocation") { TokenAllocationScreen() }
-            composable("governance") { GovernanceScreen(activity = this@MainActivity) }
-            composable("wallet") { WalletConnectScreen(activity = this@MainActivity) }
-            composable("history") { TreasuryHistoryScreen() }
+            composable("allocation") {
+              TokenAllocationScreen(state = tokenState, network = network, onRetry = vm::refresh)
+            }
+            composable("governance") {
+              GovernanceScreen(safeState = safeState, tokenState = tokenState, network = network, onRetry = vm::refresh)
+            }
+            composable("wallet") {
+              WalletLookupScreen(
+                lookupState = lookupState,
+                onLookup = vm::lookupAddress,
+                onClear = vm::clearLookup,
+                network = network
+              )
+            }
+            composable("history") {
+              TreasuryHistoryScreen(state = eventsState, network = network, onRetry = vm::refresh)
+            }
           }
         }
       }
